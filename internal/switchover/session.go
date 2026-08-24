@@ -28,18 +28,21 @@ func (s *SessionService) Failover(ctx context.Context, target *route.Route) (Sna
 	if drainTimeout <= 0 {
 		drainTimeout = s.drainer.Delay()
 	}
+	// The drain deadline scopes only the primary-drain step. A fully severed
+	// primary is an expected fault condition and must drain-fail on its own,
+	// without cancelling the rest of the recovery session: the protection path
+	// still has to be activated against the parent session context below.
 	drainCtx, cancelDrain := context.WithTimeout(ctx, drainTimeout)
 	_, drainErr := s.drainer.Drain(drainCtx, target, s.now())
+	cancelDrain()
 	if drainErr != nil {
 		operation.record(StateDrainingPrimary, "primary-drain", drainErr.Error(), s.now())
 	}
 	operation.record(StateActivating, "protection-activate", "activating protection path", s.now())
-	if _, err := s.activator.Protection(drainCtx, target, s.now()); err != nil {
-		cancelDrain()
+	if _, err := s.activator.Protection(ctx, target, s.now()); err != nil {
 		result := operation.record(StateFailed, "protection-activate", err.Error(), s.now())
 		return result, fmt.Errorf("activate protection: %w", err)
 	}
-	cancelDrain()
 	message := "protection path carries traffic"
 	if drainErr != nil {
 		message = "protection path carries traffic after primary drain timeout"
