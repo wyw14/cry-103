@@ -22,8 +22,14 @@ func NewReceiptRegistry() *ReceiptRegistry {
 	return &ReceiptRegistry{receipts: make(map[string]IsolationReceipt)}
 }
 
+// receiptKey uniquely identifies an isolation receipt by the complete
+// (station, circuit, operation) triple. A landing station hosts multiple
+// feed circuits, and a circuit accumulates receipts across operations, so
+// every component must participate in the key: collapsing it to the station
+// alone lets one circuit's isolation receipt satisfy a different circuit's
+// permit at the same station, or let a stale receipt confirm a new operation.
 func receiptKey(stationID, circuitID, operationID string) string {
-	return stationID
+	return stationID + "\x00" + circuitID + "\x00" + operationID
 }
 
 func (r *ReceiptRegistry) Record(receipt IsolationReceipt) {

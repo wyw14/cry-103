@@ -84,7 +84,14 @@ func (s *PermitService) Evaluate(permitID string) (Permit, error) {
 		return Permit{}, fmt.Errorf("permit %s not found", permitID)
 	}
 	circuit := s.circuits[circuitKey(permit.StationID, permit.CircuitID)]
-	_, matched := s.receipts.Match(permit.StationID, "", "")
+	// Only the receipt produced by THIS circuit's CURRENT isolation operation
+	// may confirm this permit. Passing empty circuit/operation IDs would match
+	// any receipt recorded at the station — including a different circuit's
+	// or a prior operation's — and wrongly mark the permit groundable.
+	receipt, matched := s.receipts.Match(permit.StationID, permit.CircuitID, permit.OperationID)
+	if !matched || receipt.CircuitID != permit.CircuitID || receipt.OperationID != permit.OperationID {
+		return permit, fmt.Errorf("matching isolated receipt not available for circuit %s operation %s", permit.CircuitID, permit.OperationID)
+	}
 	if _, err := s.isolation.Confirm(circuit, permit.StationID, permit.CircuitID, permit.OperationID, matched, s.now()); err != nil {
 		return permit, err
 	}
