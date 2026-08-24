@@ -36,11 +36,11 @@ func (c *RampController) ApplyStep(ctx context.Context, repeater *Repeater, step
 	if err := c.actuator.ApplyVoltage(ctx, command); err != nil {
 		return repeater.Snapshot(), err
 	}
-	if err := c.checkpoints.SaveRamp(store.RampCheckpoint{
-		RepeaterID: command.RepeaterID, StableStep: step.Number, UpdatedAt: c.now().UTC(),
-	}); err != nil {
-		return repeater.Snapshot(), err
-	}
+	// The checkpoint marks a step as a safe restart origin only once its current
+	// has actually settled. Committing it earlier (e.g. right after the voltage
+	// command is accepted) would let a restart resume from a step whose current
+	// never stabilized, driving the next command past the protection threshold
+	// (RAMP-OVERCURRENT). Evaluate stability first, persist afterwards.
 	samples := telemetry.CurrentSamples(c.repository, command.RepeaterID, samplesAfter)
 	result, err := c.window.Evaluate(samples)
 	if err != nil {
@@ -48,6 +48,11 @@ func (c *RampController) ApplyStep(ctx context.Context, repeater *Repeater, step
 	}
 	if !result.Stable {
 		return repeater.Snapshot(), fmt.Errorf("current for ramp step %d is not stable", step.Number)
+	}
+	if err := c.checkpoints.SaveRamp(store.RampCheckpoint{
+		RepeaterID: command.RepeaterID, StableStep: step.Number, UpdatedAt: c.now().UTC(),
+	}); err != nil {
+		return repeater.Snapshot(), err
 	}
 	return repeater.update(func(current *Snapshot) {
 		current.StableStep = step.Number
